@@ -20,6 +20,24 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IProviderService, ProviderService>();
 
+// ── Phase 3: Scheduling Services ─────────────────────────────────────────────
+builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<IPricingService, PricingService>();
+builder.Services.AddScoped<IBookingService, BookingService>();
+
+// ── Phase 4: AI Matching ──────────────────────────────────────────────────────
+builder.Services.AddScoped<IMatchingService, MatchingService>();
+
+// ── Phase 5: Messaging ────────────────────────────────────────────────────────
+builder.Services.AddScoped<IMessageService, MessageService>();
+
+// ── Phase 6: Invoicing ────────────────────────────────────────────────────────
+builder.Services.AddSingleton<InvoicePdfGenerator>();   // stateless, safe as singleton
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+
+// ── Phase 7: Reviews & Moderation ────────────────────────────────────────────
+builder.Services.AddScoped<IReviewService, ReviewService>();
+
 // ── 4. JWT Authentication ─────────────────────────────────────────────────────
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
 var secretKey = Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]!);
@@ -85,6 +103,7 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
@@ -99,10 +118,20 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();   // Serves files from wwwroot/ folder
 app.UseCors("ReactDev");
 
 app.UseAuthentication();   // Reads JWT and populates HttpContext.User
 app.UseAuthorization();    // Enforces [Authorize] attributes
 
 app.MapControllers();
+
+// ── Seed essential data (PricingRules) ────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<HomeServiceProvider.DataAccess.Data.AppDbContext>();
+    await HomeServiceProvider.DataAccess.Data.Seeding.DbSeeder.SeedAsync(context);
+}
+
 app.Run();
+

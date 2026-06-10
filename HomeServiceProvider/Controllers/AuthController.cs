@@ -51,13 +51,13 @@ public class AuthController : ControllerBase
             : BadRequest(new { message = "Invalid or expired verification token." });
     }
 
-    // POST api/auth/change-password   (requires login)
-    [HttpPost("change-password")]
-    [Authorize]
-    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto dto)
+    // POST api/auth/google
+    // React sends the Google ID token here after user approves Google Sign-In
+    [HttpPost("google")]
+    public async Task<IActionResult> GoogleLogin([FromBody] GoogleAuthDto dto)
     {
-        var userId = User.GetUserId();
-        await _authService.ChangePasswordAsync(userId, dto);
-        return Ok(new { message = "Password changed successfully." });
+        var result = await _authService.GoogleLoginAsync(dto);
+        return Ok(result);
     }
+
 }

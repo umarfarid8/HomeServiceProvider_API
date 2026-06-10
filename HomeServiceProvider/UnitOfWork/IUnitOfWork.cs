@@ -21,7 +21,7 @@ namespace HomeServiceProvider.UnitOfWork
         IRepository<PortfolioImage> PortfolioImages { get; }
         IRepository<AvailabilitySlot> AvailabilitySlots { get; }
         IRepository<BookingStatusHistory> BookingStatusHistories { get; }
-        IRepository<ChatThread> ChatThreads { get; }
+        IChatThreadRepository ChatThreads { get; }
         IRepository<Message> Messages { get; }
         IRepository<Invoice> Invoices { get; }
         IRepository<PricingRule> PricingRules { get; }

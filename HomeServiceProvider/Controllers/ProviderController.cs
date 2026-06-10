@@ -8,7 +8,7 @@ namespace HomeServiceProvider.Controllers;
 
 [ApiController]
 [Route("api/providers")]
-[Authorize(Roles = "Provider")]     // All endpoints require Provider role
+//[Authorize(Roles = "Provider")]     // All endpoints require Provider role
 public class ProviderController : ControllerBase
 {
     private readonly IProviderService _providerService;

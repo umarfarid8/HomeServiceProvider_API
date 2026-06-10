@@ -37,6 +37,14 @@ namespace HomeServiceProvider.DataAccess.Repositories.Specific
                 .Include(r => r.Booking)
                 .OrderByDescending(r => r.CreatedAt)
                 .ToListAsync();
-    }
 
+        // ADD this method inside the existing ReviewRepository class
+        public async Task<IEnumerable<Review>> GetByBookingIdAsync(Guid bookingId)
+            => await _dbSet
+                .Where(r => r.BookingId == bookingId)
+                .Include(r => r.Reviewer)
+                .Include(r => r.Reviewee)
+                .ToListAsync();
+
+    }
 }

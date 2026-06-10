@@ -24,7 +24,7 @@ namespace HomeServiceProvider.UnitOfWork
         private IRepository<PortfolioImage>? _portfolioImages;
         private IRepository<AvailabilitySlot>? _availabilitySlots;
         private IRepository<BookingStatusHistory>? _bookingStatusHistories;
-        private IRepository<ChatThread>? _chatThreads;
+        private IChatThreadRepository? _chatThreads;
         private IRepository<Message>? _messages;
         private IRepository<Invoice>? _invoices;
         private IRepository<PricingRule>? _pricingRules;
@@ -62,8 +62,8 @@ namespace HomeServiceProvider.UnitOfWork
             => _availabilitySlots ??= new Repository<AvailabilitySlot>(_context);
         public IRepository<BookingStatusHistory> BookingStatusHistories
             => _bookingStatusHistories ??= new Repository<BookingStatusHistory>(_context);
-        public IRepository<ChatThread> ChatThreads
-            => _chatThreads ??= new Repository<ChatThread>(_context);
+        public IChatThreadRepository ChatThreads
+    => _chatThreads ??= new ChatThreadRepository(_context);
         public IRepository<Message> Messages
             => _messages ??= new Repository<Message>(_context);
         public IRepository<Invoice> Invoices
