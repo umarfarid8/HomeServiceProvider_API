@@ -117,4 +117,10 @@ public class ProviderService : IProviderService
                 UploadedAt = d.CreatedAt
             }).ToList()
         };
+    public async Task<ProviderProfileDto> GetPublicProfileAsync(Guid providerProfileId)
+    {
+        var profile = await _uow.ProviderProfiles.GetFullProfileAsync(providerProfileId)
+            ?? throw new KeyNotFoundException("Provider not found.");
+        return MapToDto(profile);
+    }
 }

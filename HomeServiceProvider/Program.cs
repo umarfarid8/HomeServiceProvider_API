@@ -28,6 +28,12 @@ builder.Services.AddScoped<IBookingService, BookingService>();
 // ── Phase 4: AI Matching ──────────────────────────────────────────────────────
 builder.Services.AddScoped<IMatchingService, MatchingService>();
 
+// ── Add IMemoryCache (needed for classification caching) ──────────────────────
+builder.Services.AddMemoryCache();
+
+// ── Register the new service ──────────────────────────────────────────────────
+builder.Services.AddScoped<IHybridMatchingService, HybridMatchingService>();
+
 // ── Phase 5: Messaging ────────────────────────────────────────────────────────
 builder.Services.AddScoped<IMessageService, MessageService>();
 
@@ -37,6 +43,9 @@ builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 
 // ── Phase 7: Reviews & Moderation ────────────────────────────────────────────
 builder.Services.AddScoped<IReviewService, ReviewService>();
+
+// ── Phase 8: Admin ────────────────────────────────────────────────────────────
+builder.Services.AddScoped<IAdminService, AdminService>();
 
 // ── 4. JWT Authentication ─────────────────────────────────────────────────────
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");

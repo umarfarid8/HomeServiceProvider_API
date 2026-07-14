@@ -42,4 +42,13 @@ public class ProviderController : ControllerBase
         var document = await _providerService.AddVerificationDocumentAsync(userId, dto);
         return CreatedAtAction(nameof(AddVerificationDocument), document);
     }
+    // GET api/providers/{providerProfileId}/public
+    // Public endpoint — no auth required — used by customer-facing provider profile page
+    [HttpGet("{providerProfileId:guid}/public")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetPublicProfile(Guid providerProfileId)
+    {
+        var profile = await _providerService.GetPublicProfileAsync(providerProfileId);
+        return Ok(profile);
+    }
 }

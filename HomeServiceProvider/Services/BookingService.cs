@@ -5,6 +5,7 @@ using HomeServiceProvider.Dtos.Pricing;
 using HomeServiceProvider.Services.Interfaces;
 using HomeServiceProvider.UnitOfWork;
 
+
 namespace HomeServiceProvider.Services;
 
 public class BookingService : IBookingService

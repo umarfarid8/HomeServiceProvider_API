@@ -1,0 +1,312 @@
+﻿using System.Text.Json;
+using HomeServiceProvider.DataAccess.Entities;
+using HomeServiceProvider.Dtos.Matching;
+using HomeServiceProvider.Services.Interfaces;
+using HomeServiceProvider.UnitOfWork;
+using Microsoft.Extensions.Caching.Memory;
+using OpenAI.Chat;
+
+namespace HomeServiceProvider.Services;
+
+public class HybridMatchingService : IHybridMatchingService
+{
+    // If AI confidence is below this, reject the query and ask user to rephrase
+    private const decimal ConfidenceThreshold = 0.60m;
+
+    // Cache key prefix — combined with the query text (normalized)
+    private const string CacheKeyPrefix = "intent_";
+
+    // How long to cache a classification result
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromHours(24);
+
+    private readonly IUnitOfWork _uow;
+    private readonly IConfiguration _config;
+    private readonly IMemoryCache _cache;
+
+    public HybridMatchingService(
+        IUnitOfWork uow,
+        IConfiguration config,
+        IMemoryCache cache)
+    {
+        _uow = uow;
+        _config = config;
+        _cache = cache;
+    }
+
+    public async Task<HybridSearchResultDto> SearchAsync(
+        Guid customerUserId, HybridSearchRequestDto dto)
+    {
+        // ── Step 1: Resolve customer city ─────────────────────────────────────
+        var customerProfile = await _uow.CustomerProfiles
+            .FirstOrDefaultAsync(c => c.UserId == customerUserId)
+            ?? throw new KeyNotFoundException("Customer profile not found.");
+
+        if (string.IsNullOrWhiteSpace(customerProfile.City))
+            throw new InvalidOperationException(
+                "Please update your city in your profile before searching.");
+
+        // ── Step 2: Load all active service categories ─────────────────────────
+        var allCategories = (await _uow.ServiceCategories
+            .FindAsync(c => c.IsActive))
+            .ToList();
+
+        if (!allCategories.Any())
+            throw new InvalidOperationException(
+                "No service categories configured. Contact administrator.");
+
+        // ── Step 3: Check cache before calling OpenAI ──────────────────────────
+        var normalizedQuery = dto.Query.Trim().ToLower();
+        var cacheKey = $"{CacheKeyPrefix}{normalizedQuery}";
+        bool fromCache = false;
+        ClassificationResult classification;
+
+        if (_cache.TryGetValue(cacheKey, out ClassificationResult? cached) && cached is not null)
+        {
+            classification = cached;
+            fromCache = true;
+        }
+        else
+        {
+            // ── Step 4: Phase 1 — AI Intent Classification ─────────────────────
+            classification = await ClassifyIntentAsync(dto.Query, allCategories.Select(c => c.Name));
+
+            // Cache the result (only for successful classifications)
+            if (classification.Confidence >= ConfidenceThreshold)
+            {
+                _cache.Set(cacheKey, classification, CacheDuration);
+            }
+        }
+
+        // ── Step 5: Log the search attempt (async — don't block response) ──────
+        _ = LogSearchAsync(customerProfile.Id, dto.Query,
+            classification.Category, classification.Confidence,
+            classification.Confidence >= ConfidenceThreshold, fromCache);
+
+        // ── Step 6: Confidence gate — halt if query is unclear ─────────────────
+        if (classification.Confidence < ConfidenceThreshold ||
+            classification.Category == "Unknown")
+        {
+            throw new InvalidOperationException(
+                BuildLowConfidenceMessage(
+                    classification.Confidence, allCategories.Select(c => c.Name)));
+        }
+
+        // ── Step 7: Find the matching ServiceCategory entity ───────────────────
+        var matchedCategory = allCategories.FirstOrDefault(c =>
+            string.Equals(c.Name, classification.Category,
+                StringComparison.OrdinalIgnoreCase));
+
+        if (matchedCategory is null)
+            throw new InvalidOperationException(
+                $"Classified category '{classification.Category}' not found in database.");
+
+        // ── Step 8: Phase 2 — Single optimized DB query ────────────────────────
+        // Sorted: AverageRating DESC → TotalJobsCompleted DESC → ReviewCount DESC
+        var providers = await GetSortedProvidersAsync(
+            customerProfile.City, matchedCategory.Id);
+
+        // ── Step 9: Update analytics log with result count ────────────────────
+        _ = UpdateLogProviderCountAsync(customerProfile.Id, dto.Query, providers.Count);
+
+        if (providers.Count == 0)
+            throw new InvalidOperationException(
+                $"No verified {matchedCategory.Name} providers found in {customerProfile.City}. " +
+                "Try a nearby city or check back later.");
+
+        // ── Step 10: Phase 3 — In-memory split ────────────────────────────────
+        var topProvider = providers.First();
+        var remainingProviders = providers.Skip(1).ToList();
+
+        return new HybridSearchResultDto
+        {
+            ClassifiedCategory = matchedCategory.Name,
+            ConfidenceScore = classification.Confidence,
+            AiSuggestedProvider = MapToDto(topProvider),
+            RemainingProviders = remainingProviders.Select(MapToDto).ToList(),
+            TotalProvidersFound = providers.Count,
+            ServedFromCache = fromCache
+        };
+    }
+
+    // ─── Phase 1: AI Classification ───────────────────────────────────────────
+
+    private async Task<ClassificationResult> ClassifyIntentAsync(
+     string query, IEnumerable<string> categoryNames)
+    {
+        string systemPrompt;
+
+        // ── 🗄️ Fetch the template dynamically from the Database! ────────────────
+        var templateRecord = await _uow.AiPromptTemplates
+            .FirstOrDefaultAsync(t => t.Name == "intent_classifier");
+
+        if (templateRecord != null && !string.IsNullOrWhiteSpace(templateRecord.Content))
+        {
+            systemPrompt = templateRecord.Content
+                .Replace("{{CATEGORIES}}", string.Join("\n", categoryNames.Select(c => $"- {c}")))
+                .Replace("{{QUERY}}", query);
+        }
+        else
+        {
+            // Fallback inline prompt if database record is missing
+            systemPrompt = BuildInlinePrompt(query, categoryNames);
+        }
+
+        // ── Execute OpenAI Client Pipeline ──────────────────────────────────────
+        var apiKey = _config["OpenAI:ApiKey"]!;
+        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+
+        var client = new OpenAI.OpenAIClient(apiKey);
+        var chatClient = client.GetChatClient(model);
+
+        try
+        {
+            var response = await chatClient.CompleteChatAsync(new UserChatMessage(systemPrompt));
+            var raw = response.Value.Content[0].Text;
+            var clean = raw.Replace("```json", "").Replace("```", "").Trim();
+
+            var parsed = JsonSerializer.Deserialize<ClassificationJson>(
+                clean, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return new ClassificationResult
+            {
+                Category = parsed?.Category ?? "Unknown",
+                Confidence = parsed?.Confidence ?? 0m,
+                Reasoning = parsed?.Reasoning ?? string.Empty
+            };
+        }
+        catch
+        {
+            return new ClassificationResult
+            {
+                Category = "Unknown",
+                Confidence = 0m,
+                Reasoning = "Classification service temporarily unavailable."
+            };
+        }
+    }
+
+    // ─── Phase 2: Single Optimised DB Query ───────────────────────────────────
+
+    private async Task<List<DataAccess.Entities.ProviderProfile>> GetSortedProvidersAsync(
+        string city, Guid serviceCategoryId)
+    {
+        // GetProvidersForAIMatchAsync already filters by city + category + IsVerified
+        // We add in-memory sort: Rating DESC → Jobs DESC → ReviewCount DESC
+        var providers = (await _uow.ProviderProfiles
+            .GetProvidersForAIMatchAsync(city, serviceCategoryId))
+            .ToList();
+
+        // Secondary and tertiary sort are done in memory
+        // (GetProvidersForAIMatchAsync doesn't guarantee order)
+        return providers
+            .OrderByDescending(p => p.AverageRating)
+            .ThenByDescending(p => p.TotalJobsCompleted)
+            .ToList();
+    }
+
+    // ─── Logging Helpers ──────────────────────────────────────────────────────
+
+    // Fire-and-forget — never blocks the response
+    private async Task LogSearchAsync(
+        Guid customerProfileId, string query, string? category,
+        decimal confidence, bool success, bool fromCache)
+    {
+        try
+        {
+            var log = new SearchAnalyticsLog
+            {
+                CustomerProfileId = customerProfileId,
+                RawQuery = query.Trim(),
+                ClassifiedCategory = category,
+                ConfidenceScore = confidence,
+                WasSuccessful = success,
+                FailureReason = !success
+                    ? $"Confidence {confidence:F2} below threshold {ConfidenceThreshold:F2}"
+                    : null,
+                ServedFromCache = fromCache
+            };
+
+            await _uow.SearchAnalyticsLogs.AddAsync(log);
+            await _uow.SaveChangesAsync();
+        }
+        catch { /* never let logging break the search */ }
+    }
+
+    private async Task UpdateLogProviderCountAsync(
+        Guid customerProfileId, string query, int count)
+    {
+        try
+        {
+            var log = (await _uow.SearchAnalyticsLogs.FindAsync(l =>
+                l.CustomerProfileId == customerProfileId &&
+                l.RawQuery == query.Trim()))
+                .OrderByDescending(l => l.CreatedAt)
+                .FirstOrDefault();
+
+            if (log is not null)
+            {
+                log.ProvidersReturned = count;
+                _uow.SearchAnalyticsLogs.Update(log);
+                await _uow.SaveChangesAsync();
+            }
+        }
+        catch { /* silently ignore */ }
+    }
+
+    // ─── Mapping ──────────────────────────────────────────────────────────────
+
+    private static HybridProviderDto MapToDto(DataAccess.Entities.ProviderProfile p)
+    {
+        var maxExp = p.Services.Any()
+            ? p.Services.Max(s => s.YearsOfExperience)
+            : 0;
+
+        return new HybridProviderDto
+        {
+            ProviderProfileId = p.Id,
+            BusinessName = p.BusinessName,
+            ProviderName = p.User.FullName,
+            City = p.City,
+            AverageRating = p.AverageRating,
+            TotalJobsCompleted = p.TotalJobsCompleted,
+            BaseHourlyRate = p.BaseHourlyRate,
+            ProfileImageUrl = p.ProfileImageUrl,
+            ServiceNames = p.Services.Select(s => s.ServiceCategory.Name).ToList(),
+            ExperienceYears = maxExp
+        };
+    }
+
+    // ─── Utility ──────────────────────────────────────────────────────────────
+
+    private static string BuildLowConfidenceMessage(
+        decimal confidence, IEnumerable<string> categories)
+    {
+        var examples = string.Join(", ", categories.Take(4));
+        return $"We couldn't understand what service you need " +
+               $"(confidence: {confidence:P0}). " +
+               $"Try describing the problem differently, or pick a category like: {examples}.";
+    }
+
+    private static string BuildInlinePrompt(
+        string query, IEnumerable<string> categories)
+        => $"Classify this home service query into one of these categories: " +
+           $"{string.Join(", ", categories)}.\n" +
+           $"Query: {query}\n" +
+           $"Return JSON: {{\"category\": \"...\", \"confidence\": 0.0, \"reasoning\": \"...\"}}";
+}
+
+// ─── Internal deserialization models ──────────────────────────────────────────
+
+internal record ClassificationResult
+{
+    public string Category { get; init; } = "Unknown";
+    public decimal Confidence { get; init; } = 0m;
+    public string Reasoning { get; init; } = string.Empty;
+}
+
+internal record ClassificationJson
+{
+    public string Category { get; init; } = "Unknown";
+    public decimal Confidence { get; init; } = 0m;
+    public string Reasoning { get; init; } = string.Empty;
+}

@@ -7,4 +7,5 @@ public interface IProviderService
     Task<ProviderProfileDto> GetProfileAsync(Guid userId);
     Task<ProviderProfileDto> UpdateProfileAsync(Guid userId, UpdateProviderProfileDto dto);
     Task<VerificationDocumentDto> AddVerificationDocumentAsync(Guid userId, AddVerificationDocumentDto dto);
+    Task<ProviderProfileDto> GetPublicProfileAsync(Guid providerProfileId);
 }
