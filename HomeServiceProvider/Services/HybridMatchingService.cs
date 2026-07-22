@@ -133,23 +133,18 @@ public class HybridMatchingService : IHybridMatchingService
     private async Task<ClassificationResult> ClassifyIntentAsync(
      string query, IEnumerable<string> categoryNames)
     {
-        string systemPrompt;
+        
 
         // ── 🗄️ Fetch the template dynamically from the Database! ────────────────
-        var templateRecord = await _uow.AiPromptTemplates
-            .FirstOrDefaultAsync(t => t.Name == "intent_classifier");
+        // NEW: reads from DB
+        var template = await _uow.PromptTemplates.FirstOrDefaultAsync(
+            t => t.TemplateKey == "intent_classifier" && t.IsActive)
+            ?? throw new InvalidOperationException(
+                "Intent classifier prompt template not found. Contact administrator.");
 
-        if (templateRecord != null && !string.IsNullOrWhiteSpace(templateRecord.Content))
-        {
-            systemPrompt = templateRecord.Content
-                .Replace("{{CATEGORIES}}", string.Join("\n", categoryNames.Select(c => $"- {c}")))
-                .Replace("{{QUERY}}", query);
-        }
-        else
-        {
-            // Fallback inline prompt if database record is missing
-            systemPrompt = BuildInlinePrompt(query, categoryNames);
-        }
+        var systemPrompt = template.Content
+            .Replace("{{CATEGORIES}}", string.Join("\n", categoryNames.Select(c => $"- {c}")))
+            .Replace("{{QUERY}}", query);
 
         // ── Execute OpenAI Client Pipeline ──────────────────────────────────────
         var apiKey = _config["OpenAI:ApiKey"]!;
@@ -183,6 +178,40 @@ public class HybridMatchingService : IHybridMatchingService
                 Reasoning = "Classification service temporarily unavailable."
             };
         }
+    }
+    public async Task<HybridSearchResultDto> ManualSearchAsync(
+    Guid customerUserId, ManualSearchRequestDto dto)
+    {
+        var customerProfile = await _uow.CustomerProfiles
+            .FirstOrDefaultAsync(c => c.UserId == customerUserId)
+            ?? throw new KeyNotFoundException("Customer profile not found.");
+
+        var city = !string.IsNullOrWhiteSpace(dto.City)
+            ? dto.City.Trim()
+            : customerProfile.City;
+
+        if (string.IsNullOrWhiteSpace(city))
+            throw new InvalidOperationException(
+                "Please set your city in your profile or provide a city in the search.");
+
+        var category = await _uow.ServiceCategories.GetByIdAsync(dto.ServiceCategoryId)
+            ?? throw new KeyNotFoundException("Service category not found.");
+
+        var providers = await GetSortedProvidersAsync(city, dto.ServiceCategoryId);
+
+        if (!providers.Any())
+            throw new InvalidOperationException(
+                $"No verified {category.Name} providers found in {city}.");
+
+        return new HybridSearchResultDto
+        {
+            ClassifiedCategory = category.Name,
+            ConfidenceScore = 1.0m,   // manual = 100% certain category
+            AiSuggestedProvider = MapToDto(providers.First()),
+            RemainingProviders = providers.Skip(1).Select(MapToDto).ToList(),
+            TotalProvidersFound = providers.Count,
+            ServedFromCache = false
+        };
     }
 
     // ─── Phase 2: Single Optimised DB Query ───────────────────────────────────

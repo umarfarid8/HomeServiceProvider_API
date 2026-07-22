@@ -43,6 +43,8 @@ namespace HomeServiceProvider.DataAccess.Data
         public DbSet<MatchResult> MatchResults => Set<MatchResult>();
         public DbSet<AIEvaluationLog> AIEvaluationLogs => Set<AIEvaluationLog>();
 
+        public DbSet<PromptTemplate> PromptTemplates => Set<PromptTemplate>();
+
         public DbSet<AiPromptTemplate> AiPromptTemplates => Set<AiPromptTemplate>();        // ADD this line to AppDbContext alongside the other DbSets:
         public DbSet<SearchAnalyticsLog> SearchAnalyticsLogs => Set<SearchAnalyticsLog>();
         // Admin

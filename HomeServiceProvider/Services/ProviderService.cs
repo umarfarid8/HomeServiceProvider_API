@@ -83,6 +83,90 @@ public class ProviderService : IProviderService
         };
     }
 
+    // Add to ProviderService.cs:
+
+    public async Task<List<ProviderServiceDto>> GetMyServicesAsync(Guid userId)
+    {
+        var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
+            ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        var services = await _uow.ProviderServices.FindAsync(
+            ps => ps.ProviderProfileId == profile.Id);
+
+        var result = new List<ProviderServiceDto>();
+        foreach (var svc in services)
+        {
+            var cat = await _uow.ServiceCategories.GetByIdAsync(svc.ServiceCategoryId);
+            result.Add(new ProviderServiceDto
+            {
+                Id = svc.Id,
+                ServiceCategoryId = svc.ServiceCategoryId,
+                CategoryName = cat?.Name ?? string.Empty,
+                Description = svc.Description,
+                HourlyRate = svc.HourlyRate,
+                YearsOfExperience = svc.YearsOfExperience
+            });
+        }
+        return result;
+    }
+
+    public async Task<ProviderServiceDto> AddServiceAsync(Guid userId, AddProviderServiceDto dto)
+    {
+        var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
+            ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        var category = await _uow.ServiceCategories.GetByIdAsync(dto.ServiceCategoryId)
+            ?? throw new KeyNotFoundException("Service category not found.");
+
+        if (!category.IsActive)
+            throw new InvalidOperationException("This service category is no longer active.");
+
+        bool alreadyAdded = await _uow.ProviderServices.ExistsAsync(
+            ps => ps.ProviderProfileId == profile.Id &&
+                  ps.ServiceCategoryId == dto.ServiceCategoryId);
+
+        if (alreadyAdded)
+            throw new InvalidOperationException(
+                $"You have already added {category.Name} to your services.");
+
+        var service = new DataAccess.Entities.ProviderService
+        {
+            ProviderProfileId = profile.Id,
+            ServiceCategoryId = dto.ServiceCategoryId,
+            Description = dto.Description.Trim(),
+            HourlyRate = dto.HourlyRate,
+            YearsOfExperience = dto.YearsOfExperience
+        };
+
+        await _uow.ProviderServices.AddAsync(service);
+        await _uow.SaveChangesAsync();
+
+        return new ProviderServiceDto
+        {
+            Id = service.Id,
+            ServiceCategoryId = service.ServiceCategoryId,
+            CategoryName = category.Name,
+            Description = service.Description,
+            HourlyRate = service.HourlyRate,
+            YearsOfExperience = service.YearsOfExperience
+        };
+    }
+
+    public async Task RemoveServiceAsync(Guid userId, Guid providerServiceId)
+    {
+        var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
+            ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        var service = await _uow.ProviderServices.GetByIdAsync(providerServiceId)
+            ?? throw new KeyNotFoundException("Service not found.");
+
+        if (service.ProviderProfileId != profile.Id)
+            throw new UnauthorizedAccessException("You can only remove your own services.");
+
+        _uow.ProviderServices.Remove(service);
+        await _uow.SaveChangesAsync();
+    }
+
     // ─── Private Helper ───────────────────────────────────────────────────────
 
     private static ProviderProfileDto MapToDto(ProviderProfile profile)

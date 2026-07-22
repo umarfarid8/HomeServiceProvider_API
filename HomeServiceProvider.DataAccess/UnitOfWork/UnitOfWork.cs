@@ -34,6 +34,14 @@ namespace HomeServiceProvider.UnitOfWork
         private IRepository<AIEvaluationLog>? _aiEvaluationLogs;
         private IRepository<SystemLog>? _systemLogs;
         // ADD field:
+
+        // UnitOfWork field:
+        private IRepository<PromptTemplate>? _promptTemplates;
+
+        // UnitOfWork property:
+        public IRepository<PromptTemplate> PromptTemplates
+            => _promptTemplates ??= new Repository<PromptTemplate>(_context);
+
         private IRepository<SearchAnalyticsLog>? _searchAnalyticsLogs;
 
 

@@ -165,6 +165,159 @@ public class AdminService : IAdminService
 
         await _uow.SaveChangesAsync();
     }
+    // Add to AdminService.cs:
+
+    // ── Service Categories ─────────────────────────────────────────────────────
+
+    public async Task<List<ServiceCategoryDto>> GetServiceCategoriesAsync()
+    {
+        var categories = await _uow.ServiceCategories.GetAllAsync();
+        var providerServices = await _uow.ProviderServices.GetAllAsync();
+
+        return categories
+            .OrderBy(c => c.Name)
+            .Select(c => new ServiceCategoryDto
+            {
+                Id = c.Id,
+                Name = c.Name,
+                Description = c.Description,
+                IconUrl = c.IconUrl,
+                IsActive = c.IsActive,
+                ProviderCount = providerServices.Count(ps => ps.ServiceCategoryId == c.Id)
+            }).ToList();
+    }
+
+    public async Task<ServiceCategoryDto> CreateServiceCategoryAsync(
+        UpsertServiceCategoryDto dto, Guid adminId)
+    {
+        // Guard: no duplicate names
+        bool exists = await _uow.ServiceCategories.ExistsAsync(
+            c => c.Name.ToLower() == dto.Name.ToLower().Trim());
+
+        if (exists)
+            throw new InvalidOperationException(
+                $"A category named '{dto.Name}' already exists.");
+
+        var category = new DataAccess.Entities.ServiceCategory
+        {
+            Name = dto.Name.Trim(),
+            Description = dto.Description.Trim(),
+            IconUrl = dto.IconUrl,
+            IsActive = dto.IsActive
+        };
+
+        await _uow.ServiceCategories.AddAsync(category);
+
+        await AddLogAsync(adminId,
+            "CATEGORY_CREATED", "ServiceCategory", category.Id.ToString(),
+            $"Created category '{dto.Name}'");
+
+        await _uow.SaveChangesAsync();
+
+        return new ServiceCategoryDto
+        {
+            Id = category.Id,
+            Name = category.Name,
+            Description = category.Description,
+            IsActive = category.IsActive,
+            ProviderCount = 0
+        };
+    }
+
+    public async Task<ServiceCategoryDto> UpdateServiceCategoryAsync(
+        Guid id, UpsertServiceCategoryDto dto, Guid adminId)
+    {
+        var category = await _uow.ServiceCategories.GetByIdAsync(id)
+            ?? throw new KeyNotFoundException("Service category not found.");
+
+        // Check name uniqueness (excluding self)
+        bool nameConflict = await _uow.ServiceCategories.ExistsAsync(
+            c => c.Name.ToLower() == dto.Name.ToLower().Trim() && c.Id != id);
+
+        if (nameConflict)
+            throw new InvalidOperationException(
+                $"Another category named '{dto.Name}' already exists.");
+
+        category.Name = dto.Name.Trim();
+        category.Description = dto.Description.Trim();
+        category.IconUrl = dto.IconUrl;
+        category.IsActive = dto.IsActive;
+
+        _uow.ServiceCategories.Update(category);
+
+        await AddLogAsync(adminId, "CATEGORY_UPDATED", "ServiceCategory",
+            id.ToString(), $"Updated category '{dto.Name}'");
+
+        await _uow.SaveChangesAsync();
+
+        return new ServiceCategoryDto
+        {
+            Id = category.Id,
+            Name = category.Name,
+            Description = category.Description,
+            IsActive = category.IsActive
+        };
+    }
+
+    public async Task ToggleCategoryStatusAsync(Guid id, Guid adminId)
+    {
+        var category = await _uow.ServiceCategories.GetByIdAsync(id)
+            ?? throw new KeyNotFoundException("Category not found.");
+
+        category.IsActive = !category.IsActive;
+        _uow.ServiceCategories.Update(category);
+
+        await AddLogAsync(adminId,
+            category.IsActive ? "CATEGORY_ACTIVATED" : "CATEGORY_DEACTIVATED",
+            "ServiceCategory", id.ToString(), $"Category '{category.Name}' toggled");
+
+        await _uow.SaveChangesAsync();
+    }
+
+    // ── Prompt Templates ──────────────────────────────────────────────────────────
+
+    public async Task<List<PromptTemplateDto>> GetPromptTemplatesAsync()
+    {
+        var templates = await _uow.PromptTemplates.GetAllAsync();
+        return templates.Select(t => new PromptTemplateDto
+        {
+            Id = t.Id,
+            TemplateKey = t.TemplateKey,
+            DisplayName = t.DisplayName,
+            Description = t.Description,
+            Content = t.Content,
+            PlaceholderKeys = t.PlaceholderKeys,
+            IsActive = t.IsActive,
+            LastUpdated = t.UpdatedAt ?? t.CreatedAt
+        }).ToList();
+    }
+
+    public async Task<PromptTemplateDto> UpdatePromptTemplateAsync(
+        Guid id, UpdatePromptTemplateDto dto, Guid adminId)
+    {
+        var template = await _uow.PromptTemplates.GetByIdAsync(id)
+            ?? throw new KeyNotFoundException("Prompt template not found.");
+
+        template.Content = dto.Content;
+        if (dto.Description is not null)
+            template.Description = dto.Description;
+
+        _uow.PromptTemplates.Update(template);
+
+        await AddLogAsync(adminId, "PROMPT_TEMPLATE_UPDATED", "PromptTemplate",
+            id.ToString(), $"Updated template '{template.DisplayName}'");
+
+        await _uow.SaveChangesAsync();
+
+        return new PromptTemplateDto
+        {
+            Id = template.Id,
+            TemplateKey = template.TemplateKey,
+            DisplayName = template.DisplayName,
+            Content = template.Content,
+            LastUpdated = template.UpdatedAt ?? template.CreatedAt
+        };
+    }
 
     public async Task RejectVerificationAsync(
         Guid providerProfileId, Guid adminId, VerificationDecisionDto dto)

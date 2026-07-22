@@ -16,29 +16,60 @@ public class AdminController : ControllerBase
     public AdminController(IAdminService adminService)
         => _adminService = adminService;
 
+    // ── Service Categories ────────────────────────────────────────────────────────
+
+    [HttpGet("categories")]
+    public async Task<IActionResult> GetCategories()
+        => Ok(await _adminService.GetServiceCategoriesAsync());
+
     [HttpPost("categories")]
-    [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> CreateCategory([FromBody] CreateServiceCategoryDto dto)
+    public async Task<IActionResult> CreateCategory([FromBody] UpsertServiceCategoryDto dto)
     {
-        try
-        {
-            var result = await _adminService.CreateServiceCategoryAsync(dto);
-            return Ok(new { success = true, message = "Service category created successfully!" });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var adminId = User.GetUserId();
+        var result = await _adminService.CreateServiceCategoryAsync(dto, adminId);
+        return Ok(result);
     }
 
-    // ── Dashboard ──────────────────────────────────────────────────────────
+    [HttpPut("categories/{id:guid}")]
+    public async Task<IActionResult> UpdateCategory(
+        Guid id, [FromBody] UpsertServiceCategoryDto dto)
+    {
+        var adminId = User.GetUserId();
+        var result = await _adminService.UpdateServiceCategoryAsync(id, dto, adminId);
+        return Ok(result);
+    }
+
+    [HttpPatch("categories/{id:guid}/toggle")]
+    public async Task<IActionResult> ToggleCategory(Guid id)
+    {
+        var adminId = User.GetUserId();
+        await _adminService.ToggleCategoryStatusAsync(id, adminId);
+        return Ok(new { message = "Category status updated." });
+    }
+
+    // ── Prompt Templates ──────────────────────────────────────────────────────────
+
+    [HttpGet("prompt-templates")]
+    public async Task<IActionResult> GetPromptTemplates()
+        => Ok(await _adminService.GetPromptTemplatesAsync());
+
+    [HttpPut("prompt-templates/{id:guid}")]
+    public async Task<IActionResult> UpdatePromptTemplate(
+        Guid id, [FromBody] UpdatePromptTemplateDto dto)
+    {
+        var adminId = User.GetUserId();
+        var result = await _adminService.UpdatePromptTemplateAsync(id, dto, adminId);
+        return Ok(result);
+    }
+
+    // ── Dashboard ─────────────────────────────────────────────────────────────────
 
     // GET api/admin/dashboard
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
         => Ok(await _adminService.GetDashboardAsync());
 
-    // ── User Management ────────────────────────────────────────────────────
+    // ── User Management ───────────────────────────────────────────────────────────
 
     // GET api/admin/users?role=Provider&isActive=true&search=ali
     [HttpGet("users")]
@@ -62,7 +93,7 @@ public class AdminController : ControllerBase
         return Ok(result);
     }
 
-    // ── Provider Verification ──────────────────────────────────────────────
+    // ── Provider Verification ─────────────────────────────────────────────────────
 
     // GET api/admin/verifications/pending
     [HttpGet("verifications/pending")]
@@ -93,7 +124,7 @@ public class AdminController : ControllerBase
         return Ok(new { message = "Provider verification has been rejected." });
     }
 
-    // ── Disputes ───────────────────────────────────────────────────────────
+    // ── Disputes ──────────────────────────────────────────────────────────────────
 
     // GET api/admin/disputes
     [HttpGet("disputes")]
@@ -115,14 +146,20 @@ public class AdminController : ControllerBase
         return Ok(new { message = "Dispute has been resolved." });
     }
 
-    // ── Analytics ──────────────────────────────────────────────────────────
+    // ── Analytics & Search Logs ───────────────────────────────────────────────────
 
     // GET api/admin/analytics
     [HttpGet("analytics")]
     public async Task<IActionResult> GetAnalytics()
         => Ok(await _adminService.GetAnalyticsAsync());
 
-    // ── System Logs ────────────────────────────────────────────────────────
+    // GET api/admin/search-analytics
+    // Shows failed searches — reveals what services users want that don't exist yet
+    [HttpGet("search-analytics")]
+    public async Task<IActionResult> GetFailedSearches()
+        => Ok(await _adminService.GetFailedSearchesAsync());
+
+    // ── System Logs ───────────────────────────────────────────────────────────────
 
     // GET api/admin/logs?from=2025-01-01&to=2025-12-31&action=PROVIDER
     [HttpGet("logs")]
@@ -131,9 +168,4 @@ public class AdminController : ControllerBase
         [FromQuery] DateTime? to,
         [FromQuery] string? action)
         => Ok(await _adminService.GetLogsAsync(from, to, action));
-    // GET api/admin/search-analytics
-    // Shows failed searches — reveals what services users want that don't exist yet
-    [HttpGet("search-analytics")]
-    public async Task<IActionResult> GetFailedSearches()
-        => Ok(await _adminService.GetFailedSearchesAsync());
 }

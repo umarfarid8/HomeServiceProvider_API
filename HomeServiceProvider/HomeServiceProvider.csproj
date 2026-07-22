@@ -7,6 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Dtos\NewFolder1\**" />
+    <Content Remove="Dtos\NewFolder1\**" />
+    <EmbeddedResource Remove="Dtos\NewFolder1\**" />
+    <None Remove="Dtos\NewFolder1\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
     <PackageReference Include="Google.Apis.Auth" Version="1.75.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
@@ -23,10 +30,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HomeServiceProvider.DataAccess\HomeServiceProvider.DataAccess.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Prompts\" />
   </ItemGroup>
 
 </Project>

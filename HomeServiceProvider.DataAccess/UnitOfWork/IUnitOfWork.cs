@@ -16,6 +16,9 @@ namespace HomeServiceProvider.UnitOfWork
         // ADD this line with the other generic repositories:
         IRepository<SearchAnalyticsLog> SearchAnalyticsLogs { get; }
 
+        IRepository<PromptTemplate> PromptTemplates { get; }
+
+
         IRepository<AiPromptTemplate> AiPromptTemplates { get; }
         // Generic repositories (no custom queries needed)
         IRepository<CustomerProfile> CustomerProfiles { get; }

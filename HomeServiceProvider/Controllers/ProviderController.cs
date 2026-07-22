@@ -51,4 +51,30 @@ public class ProviderController : ControllerBase
         var profile = await _providerService.GetPublicProfileAsync(providerProfileId);
         return Ok(profile);
     }
+    // GET api/providers/services
+    [HttpGet("services")]
+    public async Task<IActionResult> GetMyServices()
+    {
+        var userId = User.GetUserId();
+        var services = await _providerService.GetMyServicesAsync(userId);
+        return Ok(services);
+    }
+
+    // POST api/providers/services
+    [HttpPost("services")]
+    public async Task<IActionResult> AddService([FromBody] AddProviderServiceDto dto)
+    {
+        var userId = User.GetUserId();
+        var service = await _providerService.AddServiceAsync(userId, dto);
+        return Ok(service);
+    }
+
+    // DELETE api/providers/services/{serviceId}
+    [HttpDelete("services/{serviceId:guid}")]
+    public async Task<IActionResult> RemoveService(Guid serviceId)
+    {
+        var userId = User.GetUserId();
+        await _providerService.RemoveServiceAsync(userId, serviceId);
+        return Ok(new { message = "Service removed." });
+    }
 }

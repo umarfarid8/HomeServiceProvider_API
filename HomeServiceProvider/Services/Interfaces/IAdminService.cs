@@ -31,4 +31,16 @@ public interface IAdminService
 
     Task<bool> CreateServiceCategoryAsync(CreateServiceCategoryDto dto);
     Task<List<SearchAnalyticsLogDto>> GetFailedSearchesAsync();
+
+    // Add to IAdminService:
+
+    // Categories
+    Task<List<ServiceCategoryDto>> GetServiceCategoriesAsync();
+    Task<ServiceCategoryDto> CreateServiceCategoryAsync(UpsertServiceCategoryDto dto, Guid adminId);
+    Task<ServiceCategoryDto> UpdateServiceCategoryAsync(Guid id, UpsertServiceCategoryDto dto, Guid adminId);
+    Task ToggleCategoryStatusAsync(Guid id, Guid adminId);
+
+    // Prompt Templates
+    Task<List<PromptTemplateDto>> GetPromptTemplatesAsync();
+    Task<PromptTemplateDto> UpdatePromptTemplateAsync(Guid id, UpdatePromptTemplateDto dto, Guid adminId);
 }

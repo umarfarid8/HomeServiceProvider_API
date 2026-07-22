@@ -41,4 +41,15 @@ public class MatchController : ControllerBase
         var result = await _hybridMatchingService.SearchAsync(userId, dto);
         return Ok(result);
     }
+
+
+    // POST api/match/manual
+    // No OpenAI call — pure DB filter by category + city sorting
+    [HttpPost("manual")]
+    public async Task<IActionResult> ManualSearch([FromBody] ManualSearchRequestDto dto)
+    {
+        var userId = User.GetUserId();
+        var result = await _hybridMatchingService.ManualSearchAsync(userId, dto);
+        return Ok(result);
+    }
 }
