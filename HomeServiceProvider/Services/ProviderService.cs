@@ -11,11 +11,20 @@ public class ProviderService : IProviderService
 
     public ProviderService(IUnitOfWork uow) => _uow = uow;
 
+    // ── Profile Management ───────────────────────────────────────────────────
+
     public async Task<ProviderProfileDto> GetProfileAsync(Guid userId)
     {
-        // GetFullProfileByUserIdAsync (added in Phase 2) includes all navigations
         var profile = await _uow.ProviderProfiles.GetFullProfileByUserIdAsync(userId)
             ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        return MapToDto(profile);
+    }
+
+    public async Task<ProviderProfileDto> GetPublicProfileAsync(Guid providerProfileId)
+    {
+        var profile = await _uow.ProviderProfiles.GetFullProfileAsync(providerProfileId)
+            ?? throw new KeyNotFoundException("Provider not found.");
 
         return MapToDto(profile);
     }
@@ -46,13 +55,14 @@ public class ProviderService : IProviderService
         return await GetProfileAsync(userId);
     }
 
+    // ── Verification Documents ───────────────────────────────────────────────
+
     public async Task<VerificationDocumentDto> AddVerificationDocumentAsync(
         Guid userId, AddVerificationDocumentDto dto)
     {
         var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
             ?? throw new KeyNotFoundException("Provider profile not found.");
 
-        // Check if this document type was already uploaded and approved
         var existing = await _uow.VerificationDocuments.FirstOrDefaultAsync(d =>
             d.ProviderProfileId == profile.Id &&
             d.DocumentType == dto.DocumentType &&
@@ -83,7 +93,62 @@ public class ProviderService : IProviderService
         };
     }
 
-    // Add to ProviderService.cs:
+    // ── Provider Availability (Using AvailabilitySlots) ─────────────────────
+
+    public async Task<List<ProviderAvailabilityDto>> GetAvailabilityAsync(Guid userId)
+    {
+        var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
+            ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        var slots = await _uow.AvailabilitySlots.FindAsync(
+            a => a.ProviderProfileId == profile.Id);
+
+        return slots
+            .OrderBy(a => a.DayOfWeek)
+            .Select(a => new ProviderAvailabilityDto
+            {
+                Id = a.Id,
+                DayOfWeek = a.DayOfWeek,
+                StartTime = a.StartTime.ToTimeSpan(),
+                EndTime = a.EndTime.ToTimeSpan(),
+                IsAvailable = a.IsAvailable
+            }).ToList();
+    }
+
+    public async Task SetAvailabilityAsync(Guid userId, List<SetAvailabilityDto> dtos)
+    {
+        var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
+            ?? throw new KeyNotFoundException("Provider profile not found.");
+
+        // 1. Fetch existing slots
+        var existingSlots = await _uow.AvailabilitySlots.FindAsync(
+            a => a.ProviderProfileId == profile.Id);
+
+        // 2. Remove old slots
+        _uow.AvailabilitySlots.RemoveRange(existingSlots);
+
+        // 3. Add new slots
+        foreach (var dto in dtos)
+        {
+            if (dto.IsAvailable)
+            {
+                await _uow.AvailabilitySlots.AddAsync(new AvailabilitySlot
+                {
+                    ProviderProfileId = profile.Id,
+                    DayOfWeek = dto.DayOfWeek,
+                    StartTime = TimeOnly.FromTimeSpan(dto.StartTime),
+                    EndTime = TimeOnly.FromTimeSpan(dto.EndTime),
+                    IsAvailable = true,
+                    IsRecurring = true
+                });
+            }
+        }
+
+        // 4. Save atomic changes safely without manual transaction conflict
+        await _uow.SaveChangesAsync();
+    }
+
+    // ── Provider Services Management ─────────────────────────────────────────
 
     public async Task<List<ProviderServiceDto>> GetMyServicesAsync(Guid userId)
     {
@@ -167,7 +232,7 @@ public class ProviderService : IProviderService
         await _uow.SaveChangesAsync();
     }
 
-    // ─── Private Helper ───────────────────────────────────────────────────────
+    // ── Private Helper ───────────────────────────────────────────────────────
 
     private static ProviderProfileDto MapToDto(ProviderProfile profile)
         => new()
@@ -201,10 +266,4 @@ public class ProviderService : IProviderService
                 UploadedAt = d.CreatedAt
             }).ToList()
         };
-    public async Task<ProviderProfileDto> GetPublicProfileAsync(Guid providerProfileId)
-    {
-        var profile = await _uow.ProviderProfiles.GetFullProfileAsync(providerProfileId)
-            ?? throw new KeyNotFoundException("Provider not found.");
-        return MapToDto(profile);
-    }
 }

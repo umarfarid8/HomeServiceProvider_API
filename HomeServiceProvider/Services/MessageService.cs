@@ -24,23 +24,22 @@ public class MessageService : IMessageService
 
         return threads.Select(t =>
         {
-            // Determine who the "other party" is based on the requesting user's role
-            bool iAmCustomer = t.Booking.CustomerProfile.UserId == userId;
+            bool iAmCustomer = t.Booking?.CustomerProfile?.UserId == userId;
             string otherName = iAmCustomer
-                ? t.Booking.ProviderProfile.User.FullName
-                : t.Booking.CustomerProfile.User.FullName;
+                ? t.Booking?.ProviderProfile?.User?.FullName ?? t.Booking?.ProviderProfile?.BusinessName ?? "Provider"
+                : t.Booking?.CustomerProfile?.User?.FullName ?? "Customer";
 
-            var lastMsg = t.Messages.OrderByDescending(m => m.CreatedAt).FirstOrDefault();
-            int unread = t.Messages.Count(m => m.SenderId != userId && !m.IsRead);
+            var lastMsg = t.Messages?.OrderByDescending(m => m.CreatedAt).FirstOrDefault();
+            int unread = t.Messages?.Count(m => m.SenderId != userId && !m.IsRead) ?? 0;
 
             return new ChatThreadSummaryDto
             {
                 ThreadId = t.Id,
                 BookingId = t.BookingId,
-                BookingStatus = t.Booking.Status.ToString(),
+                BookingStatus = t.Booking?.Status.ToString() ?? "Pending",
                 OtherPartyName = otherName,
-                ServiceCategory = t.Booking.ServiceCategory.Name,
-                ScheduledDate = t.Booking.ScheduledDate.ToString("yyyy-MM-dd"),
+                ServiceCategory = t.Booking?.ServiceCategory?.Name ?? "General",
+                ScheduledDate = t.Booking?.ScheduledDate.ToString("yyyy-MM-dd") ?? string.Empty,
                 LastMessageContent = lastMsg?.Content,
                 LastMessageAt = lastMsg?.CreatedAt,
                 UnreadCount = unread
@@ -57,15 +56,11 @@ public class MessageService : IMessageService
         var thread = await _uow.ChatThreads.GetThreadWithMessagesAsync(threadId)
             ?? throw new KeyNotFoundException("Chat thread not found.");
 
-        // Security check — only the customer or provider on this booking can read it
         VerifyParticipant(thread, userId);
 
-        // Auto-mark messages from the other party as read
-        // EF Core is already tracking these entities (loaded via Include)
-        // so we just update the property and call SaveChanges — no .Update() needed
-        var unread = thread.Messages
+        var unread = thread.Messages?
             .Where(m => m.SenderId != userId && !m.IsRead)
-            .ToList();
+            .ToList() ?? new();
 
         if (unread.Any())
         {
@@ -77,24 +72,24 @@ public class MessageService : IMessageService
             await _uow.SaveChangesAsync();
         }
 
-        bool iAmCustomer = thread.Booking.CustomerProfile.UserId == userId;
+        bool iAmCustomer = thread.Booking?.CustomerProfile?.UserId == userId;
         string otherName = iAmCustomer
-            ? thread.Booking.ProviderProfile.User.FullName
-            : thread.Booking.CustomerProfile.User.FullName;
+            ? thread.Booking?.ProviderProfile?.User?.FullName ?? thread.Booking?.ProviderProfile?.BusinessName ?? "Provider"
+            : thread.Booking?.CustomerProfile?.User?.FullName ?? "Customer";
 
         return new ChatThreadDto
         {
             ThreadId = thread.Id,
             BookingId = thread.BookingId,
-            BookingStatus = thread.Booking.Status.ToString(),
+            BookingStatus = thread.Booking?.Status.ToString() ?? "Pending",
             OtherPartyName = otherName,
-            ServiceCategory = thread.Booking.ServiceCategory.Name,
-            ProblemDescription = thread.Booking.ProblemDescription,
-            ScheduledDate = thread.Booking.ScheduledDate.ToString("yyyy-MM-dd"),
-            Messages = thread.Messages
+            ServiceCategory = thread.Booking?.ServiceCategory?.Name ?? "General",
+            ProblemDescription = thread.Booking?.ProblemDescription ?? string.Empty,
+            ScheduledDate = thread.Booking?.ScheduledDate.ToString("yyyy-MM-dd") ?? string.Empty,
+            Messages = thread.Messages?
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => MapToMessageDto(m, userId))
-                .ToList()
+                .ToList() ?? new()
         };
     }
 
@@ -108,12 +103,9 @@ public class MessageService : IMessageService
 
         VerifyParticipant(thread, userId);
 
-        // Do not allow messaging on a cancelled booking
-        if (thread.Booking.Status == BookingStatus.Cancelled)
-            throw new InvalidOperationException(
-                "Messaging is disabled for cancelled bookings.");
+        if (thread.Booking?.Status == BookingStatus.Cancelled)
+            throw new InvalidOperationException("Messaging is disabled for cancelled bookings.");
 
-        // Load sender info for the response DTO (we already know the userId)
         var sender = await _uow.Users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
@@ -128,19 +120,18 @@ public class MessageService : IMessageService
         await _uow.Messages.AddAsync(message);
         await _uow.SaveChangesAsync();
 
-        // Build the response without reloading from DB
         return new MessageDto
         {
             Id = message.Id,
             Content = message.Content,
             SenderName = sender.FullName,
-            IsMine = true,             // sender just sent it — always theirs
+            IsMine = true,
             IsRead = false,
             SentAt = message.CreatedAt
         };
     }
 
-    // ─── Unread Count (Notification Badge) ───────────────────────────────────
+    // ─── Unread Count ────────────────────────────────────────────────────────
 
     public async Task<int> GetUnreadCountAsync(Guid userId)
     {
@@ -154,12 +145,13 @@ public class MessageService : IMessageService
 
     private static void VerifyParticipant(ChatThread thread, Guid userId)
     {
-        bool isCustomer = thread.Booking.CustomerProfile.UserId == userId;
-        bool isProvider = thread.Booking.ProviderProfile.UserId == userId;
+        if (thread.Booking == null) return;
+
+        bool isCustomer = thread.Booking.CustomerProfile?.UserId == userId;
+        bool isProvider = thread.Booking.ProviderProfile?.UserId == userId;
 
         if (!isCustomer && !isProvider)
-            throw new UnauthorizedAccessException(
-                "You don't have access to this chat thread.");
+            throw new UnauthorizedAccessException("You don't have access to this chat thread.");
     }
 
     private static MessageDto MapToMessageDto(Message message, Guid requestingUserId)
@@ -167,7 +159,7 @@ public class MessageService : IMessageService
         {
             Id = message.Id,
             Content = message.Content,
-            SenderName = message.Sender.FullName,
+            SenderName = message.Sender?.FullName ?? "User",
             IsMine = message.SenderId == requestingUserId,
             IsRead = message.IsRead,
             SentAt = message.CreatedAt

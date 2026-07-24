@@ -18,35 +18,29 @@ public class AvailabilityService : IAvailabilityService
         var profile = await _uow.ProviderProfiles.GetByUserIdAsync(userId)
             ?? throw new KeyNotFoundException("Provider profile not found.");
 
-        await _uow.BeginTransactionAsync();
-        try
-        {
-            var existing = await _uow.AvailabilitySlots.FindAsync(
-                s => s.ProviderProfileId == profile.Id && s.IsRecurring);
-            _uow.AvailabilitySlots.RemoveRange(existing);
-            await _uow.SaveChangesAsync();
+        // 1. Fetch existing recurring slots
+        var existing = await _uow.AvailabilitySlots.FindAsync(
+            s => s.ProviderProfileId == profile.Id && s.IsRecurring);
 
-            var newSlots = dto.Slots.Select(s => new AvailabilitySlot
-            {
-                ProviderProfileId = profile.Id,
-                DayOfWeek = s.DayOfWeek,
-                StartTime = s.StartTime,
-                EndTime = s.EndTime,
-                IsRecurring = true,
-                IsAvailable = true
-            }).ToList();
+        // 2. Queue old slots for removal
+        _uow.AvailabilitySlots.RemoveRange(existing);
 
-            await _uow.AvailabilitySlots.AddRangeAsync(newSlots);
-            await _uow.SaveChangesAsync();
-            await _uow.CommitTransactionAsync();
-        }
-        catch
+        // 3. Queue new slots for addition
+        var newSlots = dto.Slots.Select(s => new AvailabilitySlot
         {
-            await _uow.RollbackTransactionAsync();
-            throw;
-        }
+            ProviderProfileId = profile.Id,
+            DayOfWeek = s.DayOfWeek,
+            StartTime = s.StartTime,
+            EndTime = s.EndTime,
+            IsRecurring = true,
+            IsAvailable = true
+        }).ToList();
+
+        await _uow.AvailabilitySlots.AddRangeAsync(newSlots);
+
+        // 4. Save atomic changes (EF Core handles the SQL transaction safely under retry strategy)
+        await _uow.SaveChangesAsync();
     }
-
 
     public async Task<List<AvailabilitySlotDto>> GetMyScheduleAsync(Guid userId)
     {
@@ -117,7 +111,6 @@ public class AvailabilityService : IAvailabilityService
             b.ProviderProfileId == providerProfileId &&
             b.ScheduledDate.Date == date.Date &&
             b.Status != DataAccess.Enums.BookingStatus.Cancelled);
-
 
         return response;
     }

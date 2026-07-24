@@ -5,7 +5,6 @@ using HomeServiceProvider.Dtos.Pricing;
 using HomeServiceProvider.Services.Interfaces;
 using HomeServiceProvider.UnitOfWork;
 
-
 namespace HomeServiceProvider.Services;
 
 public class BookingService : IBookingService
@@ -98,14 +97,60 @@ public class BookingService : IBookingService
         return await GetBookingDtoAsync(booking.Id);
     }
 
+    public async Task<List<BookingDto>> GetMyBookingsAsync(Guid userId, string? statusFilter = null)
+    {
+        var user = await _uow.Users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        List<Booking> bookings = new();
+
+        if (user.Role == UserRole.Provider)
+        {
+            var providerProfile = await _uow.ProviderProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+            if (providerProfile != null)
+            {
+                bookings = (await _uow.Bookings.FindAsync(b => b.ProviderProfileId == providerProfile.Id)).ToList();
+            }
+        }
+        else
+        {
+            var customerProfile = await _uow.CustomerProfiles.FirstOrDefaultAsync(c => c.UserId == userId);
+            if (customerProfile != null)
+            {
+                bookings = (await _uow.Bookings.FindAsync(b => b.CustomerProfileId == customerProfile.Id)).ToList();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(statusFilter) && Enum.TryParse<BookingStatus>(statusFilter, true, out var parsedStatus))
+        {
+            bookings = bookings.Where(b => b.Status == parsedStatus).ToList();
+        }
+
+        var result = new List<BookingDto>();
+        foreach (var b in bookings.OrderByDescending(b => b.CreatedAt))
+        {
+            try
+            {
+                var dto = await GetBookingDtoAsync(b.Id);
+                result.Add(dto);
+            }
+            catch
+            {
+                // Fallback mapping if deep relational include fails
+                result.Add(MapToBookingDto(b));
+            }
+        }
+
+        return result;
+    }
 
     public async Task<BookingDto> GetBookingByIdAsync(Guid bookingId, Guid requestingUserId)
     {
         var booking = await _uow.Bookings.GetWithFullDetailsAsync(bookingId)
             ?? throw new KeyNotFoundException("Booking not found.");
 
-        bool isCustomer = booking.CustomerProfile.UserId == requestingUserId;
-        bool isProvider = booking.ProviderProfile.UserId == requestingUserId;
+        bool isCustomer = booking.CustomerProfile?.UserId == requestingUserId;
+        bool isProvider = booking.ProviderProfile?.UserId == requestingUserId;
 
         if (!isCustomer && !isProvider)
             throw new UnauthorizedAccessException("You don't have permission to view this booking.");
@@ -118,8 +163,8 @@ public class BookingService : IBookingService
         var booking = await _uow.Bookings.GetWithFullDetailsAsync(bookingId)
             ?? throw new KeyNotFoundException("Booking not found.");
 
-        bool isCustomer = booking.CustomerProfile.UserId == userId;
-        bool isProvider = booking.ProviderProfile.UserId == userId;
+        bool isCustomer = booking.CustomerProfile?.UserId == userId;
+        bool isProvider = booking.ProviderProfile?.UserId == userId;
 
         if (!isCustomer && !isProvider)
             throw new UnauthorizedAccessException("You don't have permission to update this booking.");
@@ -148,13 +193,11 @@ public class BookingService : IBookingService
         await _uow.BookingStatusHistories.AddAsync(history);
         await _uow.SaveChangesAsync();
 
-        // Auto-generate invoice when provider marks the job as complete
         if (dto.NewStatus == BookingStatus.Completed)
             await _invoiceService.GenerateInvoiceAsync(bookingId);
 
         return await GetBookingDtoAsync(bookingId);
     }
-
 
     private async Task<bool> IsProviderAvailableForSlotAsync(Guid providerProfileId, DateTime date, TimeOnly requestedStart, TimeOnly requestedEnd)
     {
@@ -203,15 +246,15 @@ public class BookingService : IBookingService
         {
             Id = booking.Id,
             CustomerProfileId = booking.CustomerProfileId,
-            CustomerName = booking.CustomerProfile.User.FullName,
+            CustomerName = booking.CustomerProfile?.User?.FullName ?? "Customer",
             ProviderProfileId = booking.ProviderProfileId,
-            ProviderName = booking.ProviderProfile.User.FullName,
-            BusinessName = booking.ProviderProfile.BusinessName,
-            ServiceCategory = booking.ServiceCategory.Name,
-            ProblemDescription = booking.ProblemDescription,
+            ProviderName = booking.ProviderProfile?.User?.FullName ?? "Provider",
+            BusinessName = booking.ProviderProfile?.BusinessName ?? string.Empty,
+            ServiceCategory = booking.ServiceCategory?.Name ?? string.Empty,
+            ProblemDescription = booking.ProblemDescription ?? string.Empty,
             ScheduledDate = booking.ScheduledDate.ToString("yyyy-MM-dd"),
-            ScheduledStartTime = booking.ScheduledStartTime.ToString("HH:mm"),
-            ScheduledEndTime = booking.ScheduledEndTime.ToString("HH:mm"),
+            ScheduledStartTime = FormatTime(booking.ScheduledStartTime),
+            ScheduledEndTime = FormatTime(booking.ScheduledEndTime),
             Status = booking.Status.ToString(),
             IsEmergency = booking.IsEmergency,
             IsOffHours = booking.IsOffHours,
@@ -220,15 +263,22 @@ public class BookingService : IBookingService
             CancellationReason = booking.CancellationReason,
             ChatThreadId = booking.ChatThread?.Id ?? Guid.Empty,
             CreatedAt = booking.CreatedAt,
-            StatusHistory = booking.StatusHistory
+            StatusHistory = booking.StatusHistory?
                 .OrderBy(h => h.CreatedAt)
                 .Select(h => new StatusHistoryDto
                 {
                     Status = h.Status.ToString(),
                     Notes = h.Notes,
                     ChangedAt = h.CreatedAt
-                }).ToList()
+                }).ToList() ?? new()
         };
+
+    private static string FormatTime(object time)
+    {
+        if (time is TimeOnly to) return to.ToString("HH:mm");
+        if (time is TimeSpan ts) return ts.ToString(@"hh\:mm");
+        return time?.ToString() ?? "00:00";
+    }
 
     private static TimeOnly SafeAddMinutes(TimeOnly time, int minutes)
     {
