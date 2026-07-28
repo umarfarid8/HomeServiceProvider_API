@@ -96,7 +96,7 @@ public class BookingService : IBookingService
 
         return await GetBookingDtoAsync(booking.Id);
     }
-
+   
     public async Task<List<BookingDto>> GetMyBookingsAsync(Guid userId, string? statusFilter = null)
     {
         var user = await _uow.Users.GetByIdAsync(userId)
@@ -231,6 +231,8 @@ public class BookingService : IBookingService
             (BookingStatus.InProgress, BookingStatus.Completed, "Provider") => true,
             (BookingStatus.InProgress, BookingStatus.Disputed, "Customer") => true,
             (BookingStatus.Completed, BookingStatus.Disputed, "Customer") => true,
+            (BookingStatus.Pending, BookingStatus.PendingCancelled, "Provider") => true,
+            (BookingStatus.PendingCancelled, BookingStatus.Cancelled, "Provider") => true,
             _ => false
         };
 
@@ -285,5 +287,11 @@ public class BookingService : IBookingService
         var totalMinutes = time.ToTimeSpan().TotalMinutes + minutes;
         totalMinutes = Math.Max(0, Math.Min(totalMinutes, 24 * 60 - 1));
         return TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(totalMinutes));
+    }
+    public async Task DeleteBookingAsync(Guid userId, Guid bookingId)
+    {
+        var booking = await _uow.Bookings.GetByCustomerIdAsync( bookingId);
+        _uow.Bookings.Remove(booking);
+        await _uow.SaveChangesAsync();
     }
 }

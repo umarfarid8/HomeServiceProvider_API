@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
+using HomeServiceProvider.DataAccess.Entities;
 using HomeServiceProvider.Dtos.Booking;
 using HomeServiceProvider.Dtos.Pricing;
 using HomeServiceProvider.Extensions;
@@ -56,5 +57,15 @@ public class BookingController : ControllerBase
         var userId = User.GetUserId();
         var booking = await _bookingService.UpdateStatusAsync(id, userId, dto);
         return Ok(booking);
+    }
+
+
+    [HttpDelete ("{Id:guid}")]
+   [Authorize(Roles = "Customer,Provider")]
+    public async Task<IActionResult> DeleteBooking(Guid bookingId)
+    {
+        var userId = User.GetUserId();
+        await _bookingService.DeleteBookingAsync(userId , bookingId);
+        return Ok(new {Message = "Booking Deleted"});
     }
 }

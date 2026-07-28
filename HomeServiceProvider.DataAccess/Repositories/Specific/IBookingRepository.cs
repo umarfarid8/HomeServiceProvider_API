@@ -19,5 +19,7 @@ namespace HomeServiceProvider.DataAccess.Repositories.Specific
             TimeOnly start,
             TimeOnly end,
             Guid? excludeBookingId = null);
+        Task<Booking> GetByIdAsync();
+        void Remove(IEnumerable<Booking> booking);
     }
 }

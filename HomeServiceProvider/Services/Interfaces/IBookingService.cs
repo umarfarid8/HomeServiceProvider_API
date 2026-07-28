@@ -11,4 +11,5 @@ public interface IBookingService
 
     Task<BookingDto> GetBookingByIdAsync(Guid bookingId, Guid requestingUserId);
     Task<BookingDto> UpdateStatusAsync(Guid bookingId, Guid userId, UpdateBookingStatusDto dto);
+    Task DeleteBookingAsync(Guid userId, Guid bookingId);
 }

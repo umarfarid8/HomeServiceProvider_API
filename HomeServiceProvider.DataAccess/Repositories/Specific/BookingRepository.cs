@@ -72,6 +72,16 @@ namespace HomeServiceProvider.DataAccess.Repositories.Specific
                 .Include(b => b.StatusHistory.OrderBy(h => h.CreatedAt))
                 .OrderByDescending(b => b.CreatedAt)
                 .ToListAsync();
+
+        public Task<Booking> GetByIdAsync()
+        {
+            throw new NotImplementedException();
+        }
+
+        public void Remove(IEnumerable<Booking> booking)
+        {
+            throw new NotImplementedException();
+        }
     }
 
 }
