@@ -41,7 +41,6 @@ public class MatchingService : IMatchingService
                 "Try a different city or service category.");
 
         // ── Step 3: Enrich each provider with their recent reviews ────────────
-        // Build a list of (provider, reviews) pairs
         var enrichedProviders = new List<(ProviderProfile Profile, IEnumerable<Review> Reviews)>();
 
         foreach (var provider in candidates)
@@ -62,12 +61,12 @@ public class MatchingService : IMatchingService
         await _uow.MatchRequests.AddAsync(matchRequest);
         await _uow.SaveChangesAsync();
 
-        // ── Step 5: Build the prompt for OpenAI ───────────────────────────────
+        // ── Step 5: Build the prompt for AI ───────────────────────────────────
         var prompt = BuildPrompt(dto.ProblemDescription, enrichedProviders);
 
-        // ── Step 6: Call OpenAI ───────────────────────────────────────────────
+        // ── Step 6: Call OpenAI / Groq ────────────────────────────────────────
         string apiKey = _config["OpenAI:ApiKey"]!;
-        string model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        string model = _config["OpenAI:Model"] ?? "llama-3.1-8b-instant";
 
         var rankedResults = await CallOpenAIAsync(apiKey, model, prompt, matchRequest.Id);
 
@@ -111,7 +110,7 @@ public class MatchingService : IMatchingService
         };
     }
 
-    // ─── Private: Build the text prompt sent to OpenAI ────────────────────────
+    // ─── Private: Build the text prompt sent to AI ────────────────────────────
 
     private static string BuildPrompt(
         string customerProblem,
@@ -150,12 +149,11 @@ public class MatchingService : IMatchingService
         return sb.ToString();
     }
 
-    // ─── Private: Call OpenAI and parse the JSON response ─────────────────────
+    // ─── Private: Call OpenAI / Groq and parse the JSON response ──────────────
 
     private async Task<List<MatchResult>> CallOpenAIAsync(
         string apiKey, string model, string prompt, Guid matchRequestId)
     {
-        // System instruction — tells OpenAI exactly what to do and how to respond
         const string systemInstruction = """
             You are an AI matching engine for a home services platform in Pakistan.
             
@@ -186,7 +184,18 @@ public class MatchingService : IMatchingService
             - Do not invent providers. Use only the Provider IDs given to you.
             """;
 
-        var openAIClient = new OpenAI.OpenAIClient(apiKey);
+        var baseUrl = _config["OpenAI:BaseUrl"] ?? "https://api.groq.com/openai/v1/";
+
+        var clientOptions = new OpenAI.OpenAIClientOptions
+        {
+            Endpoint = new Uri(baseUrl)
+        };
+
+        var openAIClient = new OpenAI.OpenAIClient(
+            new System.ClientModel.ApiKeyCredential(apiKey),
+            clientOptions
+        );
+
         var chatClient = openAIClient.GetChatClient(model);
 
         int promptTokens = 0;
@@ -204,11 +213,9 @@ public class MatchingService : IMatchingService
             completionTokens = chatResponse.Value.Usage.OutputTokenCount;
             success = true;
 
-            // Parse the JSON response from OpenAI
             var responseText = chatResponse.Value.Content[0].Text;
             var aiItems = ParseAIResponse(responseText);
 
-            // Map to MatchResult entities
             var results = aiItems.Select((item, index) => new MatchResult
             {
                 MatchRequestId = matchRequestId,
@@ -218,7 +225,6 @@ public class MatchingService : IMatchingService
                 ExplanationTag = item.Explanation
             }).ToList();
 
-            // Log token usage for cost tracking
             await LogAICallAsync(matchRequestId, model,
                 promptTokens, completionTokens, success, null);
 
@@ -234,12 +240,10 @@ public class MatchingService : IMatchingService
         }
     }
 
-    // ─── Private: Parse OpenAI JSON output ────────────────────────────────────
+    // ─── Private: Parse AI JSON output ────────────────────────────────────────
 
     private static List<AIResponseItem> ParseAIResponse(string responseText)
     {
-        // Strip any markdown code fences OpenAI sometimes adds
-        // e.g. ```json [...] ``` → [...]
         var clean = responseText
             .Replace("```json", "")
             .Replace("```", "")
@@ -255,19 +259,17 @@ public class MatchingService : IMatchingService
         }
         catch
         {
-            // If OpenAI response is malformed, return empty rather than crash
             return new List<AIResponseItem>();
         }
     }
 
-    // ─── Private: Log the AI call for cost tracking ────────────────────────────
+    // ─── Private: Log the AI call for cost tracking ───────────────────────────
 
     private async Task LogAICallAsync(
         Guid matchRequestId, string model,
         int promptTokens, int completionTokens,
         bool success, string? errorMessage)
     {
-        // Approximate cost for gpt-4o-mini (update rates if needed)
         const decimal inputCostPer1k = 0.000150m;
         const decimal outputCostPer1k = 0.000600m;
 
@@ -288,11 +290,8 @@ public class MatchingService : IMatchingService
         };
 
         await _uow.AIEvaluationLogs.AddAsync(log);
-        // Note: caller is responsible for SaveChangesAsync
     }
 }
-
-// ─── Internal model for deserializing OpenAI JSON response ────────────────────
 
 internal class AIResponseItem
 {

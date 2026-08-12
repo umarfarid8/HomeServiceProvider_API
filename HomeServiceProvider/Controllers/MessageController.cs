@@ -26,6 +26,7 @@ public class MessageController : ControllerBase
         return Ok(threads);
     }
 
+
     // GET api/messages/threads/{threadId}
     // Opens a thread — returns all messages and marks incoming ones as read
     [HttpGet("threads/{threadId:guid}")]

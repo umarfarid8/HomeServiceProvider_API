@@ -10,13 +10,8 @@ namespace HomeServiceProvider.Services;
 
 public class HybridMatchingService : IHybridMatchingService
 {
-    // If AI confidence is below this, reject the query and ask user to rephrase
     private const decimal ConfidenceThreshold = 0.60m;
-
-    // Cache key prefix — combined with the query text (normalized)
     private const string CacheKeyPrefix = "intent_";
-
-    // How long to cache a classification result
     private static readonly TimeSpan CacheDuration = TimeSpan.FromHours(24);
 
     private readonly IUnitOfWork _uow;
@@ -54,7 +49,7 @@ public class HybridMatchingService : IHybridMatchingService
             throw new InvalidOperationException(
                 "No service categories configured. Contact administrator.");
 
-        // ── Step 3: Check cache before calling OpenAI ──────────────────────────
+        // ── Step 3: Check cache before calling AI ──────────────────────────────
         var normalizedQuery = dto.Query.Trim().ToLower();
         var cacheKey = $"{CacheKeyPrefix}{normalizedQuery}";
         bool fromCache = false;
@@ -70,15 +65,14 @@ public class HybridMatchingService : IHybridMatchingService
             // ── Step 4: Phase 1 — AI Intent Classification ─────────────────────
             classification = await ClassifyIntentAsync(dto.Query, allCategories.Select(c => c.Name));
 
-            // Cache the result (only for successful classifications)
             if (classification.Confidence >= ConfidenceThreshold)
             {
                 _cache.Set(cacheKey, classification, CacheDuration);
             }
         }
 
-        // ── Step 5: Log the search attempt (async — don't block response) ──────
-        _ = LogSearchAsync(customerProfile.Id, dto.Query,
+        // ── Step 5: Log search attempt (AWAITED to avoid DbContext concurrency issues)
+        await LogSearchAsync(customerProfile.Id, dto.Query,
             classification.Category, classification.Confidence,
             classification.Confidence >= ConfidenceThreshold, fromCache);
 
@@ -100,20 +94,19 @@ public class HybridMatchingService : IHybridMatchingService
             throw new InvalidOperationException(
                 $"Classified category '{classification.Category}' not found in database.");
 
-        // ── Step 8: Phase 2 — Single optimized DB query ────────────────────────
-        // Sorted: AverageRating DESC → TotalJobsCompleted DESC → ReviewCount DESC
+        // ── Step 8: Phase 2 — Database Query ───────────────────────────────────
         var providers = await GetSortedProvidersAsync(
             customerProfile.City, matchedCategory.Id);
 
-        // ── Step 9: Update analytics log with result count ────────────────────
-        _ = UpdateLogProviderCountAsync(customerProfile.Id, dto.Query, providers.Count);
+        // ── Step 9: Update analytics log count (AWAITED) ───────────────────────
+        await UpdateLogProviderCountAsync(customerProfile.Id, dto.Query, providers.Count);
 
         if (providers.Count == 0)
             throw new InvalidOperationException(
                 $"No verified {matchedCategory.Name} providers found in {customerProfile.City}. " +
                 "Try a nearby city or check back later.");
 
-        // ── Step 10: Phase 3 — In-memory split ────────────────────────────────
+        // ── Step 10: Phase 3 — Split AI Top Match vs Remaining ─────────────────
         var topProvider = providers.First();
         var remainingProviders = providers.Skip(1).ToList();
 
@@ -131,12 +124,8 @@ public class HybridMatchingService : IHybridMatchingService
     // ─── Phase 1: AI Classification ───────────────────────────────────────────
 
     private async Task<ClassificationResult> ClassifyIntentAsync(
-     string query, IEnumerable<string> categoryNames)
+        string query, IEnumerable<string> categoryNames)
     {
-        
-
-        // ── 🗄️ Fetch the template dynamically from the Database! ────────────────
-        // NEW: reads from DB
         var template = await _uow.PromptTemplates.FirstOrDefaultAsync(
             t => t.TemplateKey == "intent_classifier" && t.IsActive)
             ?? throw new InvalidOperationException(
@@ -146,11 +135,20 @@ public class HybridMatchingService : IHybridMatchingService
             .Replace("{{CATEGORIES}}", string.Join("\n", categoryNames.Select(c => $"- {c}")))
             .Replace("{{QUERY}}", query);
 
-        // ── Execute OpenAI Client Pipeline ──────────────────────────────────────
         var apiKey = _config["OpenAI:ApiKey"]!;
-        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        var model = _config["OpenAI:Model"] ?? "llama-3.1-8b-instant";
+        var baseUrl = _config["OpenAI:BaseUrl"] ?? "https://api.groq.com/openai/v1/";
 
-        var client = new OpenAI.OpenAIClient(apiKey);
+        var clientOptions = new OpenAI.OpenAIClientOptions
+        {
+            Endpoint = new Uri(baseUrl)
+        };
+
+        var client = new OpenAI.OpenAIClient(
+            new System.ClientModel.ApiKeyCredential(apiKey),
+            clientOptions
+        );
+
         var chatClient = client.GetChatClient(model);
 
         try
@@ -179,8 +177,9 @@ public class HybridMatchingService : IHybridMatchingService
             };
         }
     }
+
     public async Task<HybridSearchResultDto> ManualSearchAsync(
-    Guid customerUserId, ManualSearchRequestDto dto)
+        Guid customerUserId, ManualSearchRequestDto dto)
     {
         var customerProfile = await _uow.CustomerProfiles
             .FirstOrDefaultAsync(c => c.UserId == customerUserId)
@@ -206,7 +205,7 @@ public class HybridMatchingService : IHybridMatchingService
         return new HybridSearchResultDto
         {
             ClassifiedCategory = category.Name,
-            ConfidenceScore = 1.0m,   // manual = 100% certain category
+            ConfidenceScore = 1.0m,
             AiSuggestedProvider = MapToDto(providers.First()),
             RemainingProviders = providers.Skip(1).Select(MapToDto).ToList(),
             TotalProvidersFound = providers.Count,
@@ -214,19 +213,15 @@ public class HybridMatchingService : IHybridMatchingService
         };
     }
 
-    // ─── Phase 2: Single Optimised DB Query ───────────────────────────────────
+    // ─── Phase 2: DB Query Sorting ────────────────────────────────────────────
 
     private async Task<List<DataAccess.Entities.ProviderProfile>> GetSortedProvidersAsync(
         string city, Guid serviceCategoryId)
     {
-        // GetProvidersForAIMatchAsync already filters by city + category + IsVerified
-        // We add in-memory sort: Rating DESC → Jobs DESC → ReviewCount DESC
         var providers = (await _uow.ProviderProfiles
             .GetProvidersForAIMatchAsync(city, serviceCategoryId))
             .ToList();
 
-        // Secondary and tertiary sort are done in memory
-        // (GetProvidersForAIMatchAsync doesn't guarantee order)
         return providers
             .OrderByDescending(p => p.AverageRating)
             .ThenByDescending(p => p.TotalJobsCompleted)
@@ -235,7 +230,6 @@ public class HybridMatchingService : IHybridMatchingService
 
     // ─── Logging Helpers ──────────────────────────────────────────────────────
 
-    // Fire-and-forget — never blocks the response
     private async Task LogSearchAsync(
         Guid customerProfileId, string query, string? category,
         decimal confidence, bool success, bool fromCache)
@@ -258,7 +252,7 @@ public class HybridMatchingService : IHybridMatchingService
             await _uow.SearchAnalyticsLogs.AddAsync(log);
             await _uow.SaveChangesAsync();
         }
-        catch { /* never let logging break the search */ }
+        catch { /* ignore log failures */ }
     }
 
     private async Task UpdateLogProviderCountAsync(
@@ -279,7 +273,7 @@ public class HybridMatchingService : IHybridMatchingService
                 await _uow.SaveChangesAsync();
             }
         }
-        catch { /* silently ignore */ }
+        catch { /* ignore log failures */ }
     }
 
     // ─── Mapping ──────────────────────────────────────────────────────────────
@@ -315,16 +309,7 @@ public class HybridMatchingService : IHybridMatchingService
                $"(confidence: {confidence:P0}). " +
                $"Try describing the problem differently, or pick a category like: {examples}.";
     }
-
-    private static string BuildInlinePrompt(
-        string query, IEnumerable<string> categories)
-        => $"Classify this home service query into one of these categories: " +
-           $"{string.Join(", ", categories)}.\n" +
-           $"Query: {query}\n" +
-           $"Return JSON: {{\"category\": \"...\", \"confidence\": 0.0, \"reasoning\": \"...\"}}";
 }
-
-// ─── Internal deserialization models ──────────────────────────────────────────
 
 internal record ClassificationResult
 {

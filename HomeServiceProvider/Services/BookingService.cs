@@ -290,7 +290,7 @@ public class BookingService : IBookingService
     }
     public async Task DeleteBookingAsync(Guid userId, Guid bookingId)
     {
-        var booking = await _uow.Bookings.GetByCustomerIdAsync( bookingId);
+        var booking = await _uow.Bookings.GetByIdAsync( bookingId);
         _uow.Bookings.Remove(booking);
         await _uow.SaveChangesAsync();
     }

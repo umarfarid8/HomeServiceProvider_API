@@ -60,12 +60,12 @@ public class BookingController : ControllerBase
     }
 
 
-    [HttpDelete ("{Id:guid}")]
+    [HttpDelete ("{id:guid}")]
    [Authorize(Roles = "Customer,Provider")]
-    public async Task<IActionResult> DeleteBooking(Guid bookingId)
+    public async Task<IActionResult> DeleteBooking(Guid id)
     {
         var userId = User.GetUserId();
-        await _bookingService.DeleteBookingAsync(userId , bookingId);
+        await _bookingService.DeleteBookingAsync(userId , id);
         return Ok(new {Message = "Booking Deleted"});
     }
 }

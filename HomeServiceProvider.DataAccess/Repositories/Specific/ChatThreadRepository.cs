@@ -15,14 +15,14 @@ public class ChatThreadRepository : Repository<ChatThread>, IChatThreadRepositor
     {
         // Build the base query with all navigation properties we need
         IQueryable<ChatThread> query = _dbSet
-            .Include(t => t.Booking)
-                .ThenInclude(b => b.CustomerProfile).ThenInclude(c => c.User)
-            .Include(t => t.Booking)
-                .ThenInclude(b => b.ProviderProfile).ThenInclude(p => p.User)
-            .Include(t => t.Booking)
-                .ThenInclude(b => b.ServiceCategory)
-            .Include(t => t.Messages)
-                .ThenInclude(m => m.Sender);
+            .Include(t => t.Booking);
+            //    .ThenInclude(b => b.CustomerProfile).ThenInclude(c => c.User)
+            //.Include(t => t.Booking);
+            //    .ThenInclude(b => b.ProviderProfile).ThenInclude(p => p.User)
+            //.Include(t => t.Booking)
+            //    .ThenInclude(b => b.ServiceCategory)
+            //.Include(t => t.Messages)
+            //    .ThenInclude(m => m.Sender);
 
         // Filter to only threads this user is part of
         query = role == UserRole.Customer

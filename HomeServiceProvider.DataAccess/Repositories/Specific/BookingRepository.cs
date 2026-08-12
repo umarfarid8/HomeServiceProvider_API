@@ -73,15 +73,19 @@ namespace HomeServiceProvider.DataAccess.Repositories.Specific
                 .OrderByDescending(b => b.CreatedAt)
                 .ToListAsync();
 
-        public Task<Booking> GetByIdAsync()
+        public async Task<Booking> GetByIdAsync(Guid bookingId)
         {
-            throw new NotImplementedException();
+            return await _dbSet.FirstOrDefaultAsync(b => b.Id == bookingId);
         }
 
         public void Remove(IEnumerable<Booking> booking)
         {
             throw new NotImplementedException();
         }
+
+      
+
+       
     }
 
 }
